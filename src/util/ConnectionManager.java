@@ -13,11 +13,21 @@ import java.sql.SQLException;
  * Т.к. это утилитный класс, класс должен быть неизменяем (final) и иметь private конструктор.
  * <br><br>
  * <b>Всё, что будет в этом классе - это получение соединения</b>
+ * <hr>
+ * <h1>Где на самом деле принято хранить настройки сохранения?</h1>
+ * Конфигурационные данные, настройки принято выносить в <i>application.properties</i> файл. Это текстовый файл,
+ * который можно менять без перекомпиляции нашего приложения. Этот файл как правло хранится в директории
+ * <i>resources</i>.
+ * <br><br>
+ * <i>application.properties</i> файл представляет из себя обычный текстовый файл, в котором есть ключ-значение.
+ * По сути говоря, это аналог нашего ассоциативного массива. И ключи обычно именуются с маленькой буквы и если
+ * там несколько слов, то они разделяются через точку.
  */
 public final class ConnectionManager {
-    private static final String URL = "jdbc:postgresql://localhost:5432/postgres";
-    private static final String USERNAME = "postgres";
-    private static final String PASSWORD = "postgres";
+
+    private static final String URL_KEY = "db.url";
+    private static final String USERNAME_KEY = "db.username";
+    private static final String PASSWORD_KEY = "db.password";
 
     private ConnectionManager() {
 
@@ -51,7 +61,11 @@ public final class ConnectionManager {
     public static Connection open() {
         // Создаём соединение
         try {
-            return DriverManager.getConnection(URL, USERNAME, PASSWORD);
+            return DriverManager.getConnection(
+                    PropertiesUtil.get(URL_KEY),
+                    PropertiesUtil.get(USERNAME_KEY),
+                    PropertiesUtil.get(PASSWORD_KEY)
+            );
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }
