@@ -1,5 +1,8 @@
 import util.ConnectionManager;
 
+import javax.xml.transform.Result;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -8,42 +11,66 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * <h1>FetchSize</h1>
- * {@code FetchSize} является ключевым в производительности приложения работы с БД. Как только мы делаем запрос и
- * получаем большую выборку, то {@code FetchSize = 3} говорит о том, что мы сначала берём только три строки из
- * всей нашей выборки и через соединение получаем их из БД в приложение. За тем, после того как <b>курсор</b> ResultSet
- * прошёлся по выборке, у соединённого БД берём ещё 3 строки. Так, рекурсивно проходимся и проверяем, есть ли там
- * данные из следующей пачки или нет. Если есть - отправляем в Java приложение.
+ * <h1>MetaData</h1>
+ * У баз данных есть свои мета-данные: схемы, таблицы, представления, индексы, ключи.
  * <br><br>
- * Если указывать довольно маленький {@code FetchSize}, то приложение будет очень часто обращаться к БД, что не есть
- * хорошо. Обычно следует выбирать в пределах 50-100, но это может варьироваться и для более сложных запросов возможно
- * пригодится более большой {@code FetchSize}, чтобы улучшить производительность приложение и не обращаться лишний раз
- * в базу данных. В тоже самое, если {@code FetchSize} будет слишком большой, то в этом случае может просто не хватить
- * памяти (оперативной, т.к. данные хранятся в оперативной) на Java приложение.
- * <br><br>
- * Следует помнить, что в зависимости от драйвера, который мы используем для соединения с базой данных, все настройки
- * по умолчанию будут отличаться.
+ * Клиент получает всю эту информацию используя мета-данные из соединения.
  */
 public class JdbcRunner {
     public static void main(String[] args) {
-        // С начала дня 2020-1-01 по сегоднешнее число
-        var flightsBetweenResult = getFlightsBetween(
-                LocalDate.of(2020, 1, 1).atStartOfDay(),
-                LocalDateTime.now()
-        );
-        System.out.println(flightsBetweenResult);
+        checkMetaData();
     }
 
     /**
-     * В каждом запросе, который мы делаем (<b>не</b> соединении), а именно для каждого запроса устанавливаем
-     * <i>FetchSize</i> равный двадцати:
-     * <pre>{@code prepareStatement.setFetchSize(20);}</pre>
-     * Устанавливаем тайм-аут для соединений, измеряется в секундах.
-     * <pre>{@code prepareStatement.setQueryTimeout(10);}</pre>
-     * Аналог лимита для всех запросов. Т.е., если сделали довольно большую выборку, то setMaxRows обезопасывает нас
-     * от того, чтобы у нас не упало Java-приложение, опять же из-за ошибки переполнения памяти.
-     * <pre>{@code prepareStatement.setMaxRows(100);}</pre>
+     * <b>Создадим метод, в котором просто протестируем мета-данные</b>
+     * <br><br>
+     * Нам нужно соединении для получения мета-информации, не надо делать никаких запросов. Т.е., просто владея
+     * соединением с базой данных, мы можем получить всю необходимую нам информацию о том, чтобы понять - что за
+     * структура нашей базы данных.
+     * <pre>{@code var metaData = connection.getMetaData();}</pre>
+     * Из {@code connection.getMetaData()} мы так же можем получить большое количество информации
+     * (схемы, таблицы (а так же данные о них), представления, индексы, ключи)
+     * <br><br>
+     * Получая информацию из мета-данных, мы получаем <b>не </b> список, а <b>ResultSet</b>:
+     * <pre>{@code ResultSet catalogs = metaData.getCatalogs();}</pre>
+     * <br>
+     * Чтобы не запоминать аргументы, <b>ОБЯЗАТЕЛЬНО</b> читать документацию.
      */
+    private static void checkMetaData() {
+        try (var connection = ConnectionManager.open()) {
+            // Получаем мета-данные
+            var metaData = connection.getMetaData();
+            // Получаем все каталоги из мета-данных, на выходе получаем ResultSet, СМОТРЕТЬ ДОКУМЕНТАЦИЮ
+            ResultSet catalogs = metaData.getCatalogs();
+
+            // Берём все сущности из схемы flight_storage
+            // Проходимся по каталогам
+            while (catalogs.next()) {
+                // Получаем название каталога
+                String catalog = catalogs.getString(1);
+                // Получаем схемы каталога
+                ResultSet schemas = metaData.getSchemas();
+
+                // Проходимся по схемах каталога
+                while (schemas.next()) {
+                    // Получаем название схемы каталога
+                    String schema = schemas.getString("TABLE_SCHEM");
+                    // Получаем все сущности схемы каталога
+                    ResultSet tables = metaData.getTables(catalog, schema, "%", null);
+
+                    // Если схема равна нужной нам, то выводим названия таблиц схемы каталога
+                    if (schema.equals("flight_storage")) {
+                        while (tables.next()) {
+                            System.out.println(tables.getString("TABLE_NAME"));
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static List<Long> getFlightsBetween(LocalDateTime start, LocalDateTime end) {
         String sql = """
                 SELECT id FROM flight_storage.flight WHERE departure_date BETWEEN ? AND ?
