@@ -1,64 +1,105 @@
 package util;
 
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 
 /**
- * <h1>Util класс для получения соединения</h1>
- * В директории utils хранятся константные данные.
+ * <h1>Connection pool (Пул соединений)</h1>
+ * В современных приложениях <b>всегда</b> используется connection pool и никогда не создаются новые соединения, когда
+ * необходимо выполнить любой запрос из стороны Java-приложения. По сути, connection pool представляет из себя
+ * обычную структуру данных, какую-либо java коллекцию, например очередь или список, которая сразу же инициализирует
+ * несколько соединений. Например:
  * <br><br>
- * В этом классе мы храним необходимые данные для подключения к БД, а так-же позвращаем соединение.
+ * <img src="ConnectionPool1.png" />
+ * <br>
+ * В данном примере проинициализировали очередь из пяти соединений. В данном случае размер равняется пяти. Далее, мы
+ * больше никогда не создаём соединения нашего приложения. Поэтому, теперь, когда мы пишем
+ * <pre>{@code try (Connection connection = ConnectionManager.open())}</pre>- мы не будем создавать новое соединение,
+ * а возвращаем уже готовое проинициализированное соединение из нашей коллекции, для того чтобы выполнить какой-либо
+ * запрос из потока. Естественно предположить, что мы не можем одновременно выполнять более пяти запросов, потому
+ * что пул соединений равен пяти. Но на самом деле этого и не нужно, потому что в реальных приложениях достаточно
+ * иметь пул соединений в размере от пяти до двадцати, не больше, это более чем достаточно для дееспособности нашего
+ * сервиса. Поэтому, когда берём наше соединение для того, чтобы выполнить запрос - мы получаем из нашего пула готовое
+ * соединение, выполняем наш код и как только выходим из него (по сути, должны закрыть соеиднение), то вместо закрытия
+ * просто возвращаем в наш пул соединение после использования.
  * <br><br>
- * Т.к. это утилитный класс, класс должен быть неизменяем (final) и иметь private конструктор.
- * <br><br>
- * <b>Всё, что будет в этом классе - это получение соединения</b>
- * <hr>
- * <h1>Где на самом деле принято хранить настройки сохранения?</h1>
- * Конфигурационные данные, настройки принято выносить в <i>application.properties</i> файл. Это текстовый файл,
- * который можно менять без перекомпиляции нашего приложения. Этот файл как правло хранится в директории
- * <i>resources</i>.
- * <br><br>
- * <i>application.properties</i> файл представляет из себя обычный текстовый файл, в котором есть ключ-значение.
- * По сути говоря, это аналог нашего ассоциативного массива. И ключи обычно именуются с маленькой буквы и если
- * там несколько слов, то они разделяются через точку.
+ * <h2>Перепишем {@code class ConnectionManager} таким образом.</h2>
+ * На реальной практике таких классов не создают, потому что уже есть готовые библиотеки.
+ * <br>
+ * В <b>application.properties</b> указываем {@code db.pool.size=5}.
  */
 public final class ConnectionManager {
 
     private static final String URL_KEY = "db.url";
     private static final String USERNAME_KEY = "db.username";
     private static final String PASSWORD_KEY = "db.password";
+    private static final String POOL_SIZE_KEY = "db.pool.size";
+    private static final int DEFAULT_POOL_SIZE = 10;
+
+    // Объявляем потокобезопасною очередь
+    private static BlockingQueue<Connection> pool;
+    // Объявляем список для закрытия соединений. Здесь храним исходные соединения
+    private static List<Connection> sourceConnections;
+
+    static {
+        loadDriver();
+        initConnectionPool();
+    }
 
     private ConnectionManager() {
 
     }
 
     /**
-     * <h2>Рассмотрим метод getConnection, а именно как возвращает необходимое соединение:</h2>
-     * <ul>
-     *     <li>
-     *         Создаёт <i>java.util.Properties</i> и по сути просто делигирует вызов в другой getConnection, который ещё
-     *         принимает Properties файл. <i>Properties</i> - это по сути обычный класс, старый вариант представления
-     *         HashMap, который представляет из себя обычный ассоциативный массив.
-     *     </li>
-     *     <li>
-     *         Далее, он пытается из регистрированных драйверов найти тот, который подходит по URL. Т.е. по сути у него
-     *         есть URL, который и является основным для того, чтобы определить какой драйвер подходит, а какой нет.
-     *         Но т.к. он не умеет определять по URL какой драйвер подходит для соединения с нашей СУБД, потому что их
-     *         бывает много, он проверяет каждый из драйверов, который у него есть в CLASSPATH.
-     *     </li>
-     *     <li>
-     *         Следовательно, если какой-то драйвер не подходит, то получается Exception, который отлавливает и
-     *         сохраняет в <i>reason</i>. И так циклом проходит до тех пор, пока рано или поздго не получится
-     *         подключиться к Connection. И как только у него получилось соединиться и у него вернулся <i>Connection</i>
-     *         без Exception, он возвращает этот Connection.
-     *         <br><br>
-     *         В противном случае, если не получилось зайти в <i>if (con != null)</i>, он просто в конечном итоге
-     *         проверяет, если есть ли Exception, то пробрасывает <i>throw exception</i>.
-     *     </li>
-     * </ul>
+     * <h1>Метод, который инициализирует пул соединений</h1>
      */
-    public static Connection open() {
+    private static void initConnectionPool() {
+        // Получаем размер пула
+        String poolSize = PropertiesUtil.get(POOL_SIZE_KEY);
+        // Устанавливаем размер
+        int size = poolSize == null ? DEFAULT_POOL_SIZE : Integer.parseInt(poolSize);
+        // Инициализируем массив потокобезопасной очереди
+        pool = new ArrayBlockingQueue<>(size);
+
+        sourceConnections = new ArrayList<>(size);
+
+        // Проходимся по пулу и вставляем туда все наши соединения
+        for (int i = 0; i < size; i++) {
+            Connection connection = open();
+            // Reflection API
+            Connection proxyConnection = (Connection) Proxy.newProxyInstance(
+                    ConnectionManager.class.getClassLoader(),
+                    new Class[]{Connection.class},
+                    ((proxy, method, args) -> method.getName().equals("close")
+                            ? pool.add((Connection) proxy)
+                            : method.invoke(connection, args)
+                    )
+            );
+            pool.add(proxyConnection);
+            sourceConnections.add(connection);
+        }
+    }
+
+    /**
+     * <h1>Открытый метод, который достаёт соединения из нашего пулла</h1>
+     *
+     * @return Возвращаем соединение, если оно есть. Если пул пустой, тогда ждёт.
+     */
+    public static Connection get() {
+        try {
+            return pool.take();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static Connection open() {
         // Создаём соединение
         try {
             return DriverManager.getConnection(
@@ -72,33 +113,30 @@ public final class ConnectionManager {
     }
 
     /**
-     * До java 1.8 были проблемы с подгрузкой наших драйверов, которые мы подключали через дополнительные
-     * библиотеки и они автоматически сами не находились в CLASSPATH. Следственно, их нужно было загружать.
-     * Для этого создадим статический блок инициализации и в нём необходимо было сделать Class.forName() и
-     * загрузить этот драйвер.
-     * <br><br>
-     * Т.е. по сути, через Class.forName() мы загружали тот класс, который передали в качестве строки в
-     * нашу память JVM. После java 1.8 этот баг называется "metaspace".
-     * <br><br>
-     * Полное имя класса состоит не только из его названия, но и из пакетов в котором он находится.
-     * Таким образом мы явно загружаем его в память и у нас не будет исключения в случае получения соединения
-     * у нашего DriverManager, даже если работаем на java до 1.8.
-     * <br><br>
-     * Естественно у нас есть опять же исключение, которое нужно обернуть в try-catch. Тут обязательно
-     * должны пробрасывать потому что если такого класса мы не нашли, то в случае catch продолжаем выполнять
-     * наш код и приложение без проблем поднимется.
-     * <br><br>
-     * <b>Таким образом,</b> у нас будет код, который работает даже в старых версиях java.
+     * <h1>Метод для закрытия соединения в пулле</h1>
+     * Здесь мы должны пройтись по каждому соединению и закрыть его, но вызов метода {@code .close()} у {@code Proxy}
+     * возвращает в пул, а не закрывает его. Поэтому, нам нужна ещё одна коллекция, где мы будем хранить исходные
+     * соединения, которые нужны будут для закртия в конце:
+     * <pre>{@code
+     *     // Объявляем список для закрытия соединений
+     *     private static List<Connection> sourceConnections;
+     * }</pre>
      */
+    public static void closePool() {
+        try {
+            for (Connection sourceConnection : sourceConnections) {
+                sourceConnection.close();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private static void loadDriver() {
         try {
             Class.forName("org.postgresql.Driver");
         } catch (ClassNotFoundException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    static {
-        loadDriver();
     }
 }

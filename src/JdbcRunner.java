@@ -9,11 +9,15 @@ import java.util.List;
 
 public class JdbcRunner {
     public static void main(String[] args) {
-        checkMetaData();
+        try {
+            checkMetaData();
+        } finally {
+            ConnectionManager.closePool();
+        }
     }
 
     private static void checkMetaData() {
-        try (var connection = ConnectionManager.open()) {
+        try (var connection = ConnectionManager.get()) {
             // Получаем мета-данные
             var metaData = connection.getMetaData();
             // Получаем все каталоги из мета-данных, на выходе получаем ResultSet, СМОТРЕТЬ ДОКУМЕНТАЦИЮ
@@ -55,7 +59,7 @@ public class JdbcRunner {
         List<Long> result = new ArrayList<>();
 
         try (
-                var connection = ConnectionManager.open();
+                var connection = ConnectionManager.get();
                 var prepareStatement = connection.prepareStatement(sql);
         ) {
             prepareStatement.setFetchSize(20);
@@ -89,7 +93,7 @@ public class JdbcRunner {
                 """;
         List<Long> result = new ArrayList<>();
         try (
-                var connection = ConnectionManager.open();
+                var connection = ConnectionManager.get();
                 var prepareStatement = connection.prepareStatement(sql);
         ) {
             prepareStatement.setLong(1, flightId);

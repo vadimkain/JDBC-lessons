@@ -72,7 +72,7 @@ public class BlobRunner {
                 UPDATE flight_storage.aircraft SET image = ? WHERE id = 1
                 """;
         try (
-                Connection connection = ConnectionManager.open();
+                Connection connection = ConnectionManager.get();
                 PreparedStatement preparedStatement = connection.prepareStatement(sql);
         ) {
             byte[] image = Files.readAllBytes(Path.of("resources", "Boeing777.jpg"));
@@ -91,7 +91,7 @@ public class BlobRunner {
                 SELECT image FROM flight_storage.aircraft WHERE id = ?;
                 """;
         try (
-                Connection connection = ConnectionManager.open();
+                Connection connection = ConnectionManager.get();
                 PreparedStatement preparedStatement = connection.prepareStatement(sql);
         ) {
             preparedStatement.setInt(1, 1);
@@ -108,7 +108,7 @@ public class BlobRunner {
     private static void alterColumnToAircraft() {
         String sql = "ALTER TABLE flight_storage.aircraft ADD image BYTEA;";
         try (
-                Connection connection = ConnectionManager.open();
+                Connection connection = ConnectionManager.get();
                 PreparedStatement preparedStatement = connection.prepareStatement(sql)
         ) {
             preparedStatement.execute();
