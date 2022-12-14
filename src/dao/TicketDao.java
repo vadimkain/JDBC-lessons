@@ -1,5 +1,6 @@
 package dao;
 
+import dto.TicketFilter;
 import entity.Ticket;
 import exception.DaoException;
 import util.ConnectionManager;
@@ -8,18 +9,12 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+
+import static java.util.stream.Collectors.joining;
 
 /**
- * <h1>DAO. Операции DELETE и INSERT</h1>
- * Основные операции, которые можем делать с таблицей:
- * <ul>
- *     <li>Create</li>
- *     <li>Read</li>
- *     <li>Update</li>
- *     <li>Delete</li>
- * </ul>
- * И в основном все эти четыре операции есть в каждом из DAO. Следовательно, мы должны реализовать его и в нашем
- * TicketDao.
+ * <h1>DAO. Batch SELECT с фильтрацией</h1>
  */
 public class TicketDao {
     private static final String DELETE_SQL = """
@@ -41,6 +36,87 @@ public class TicketDao {
     public static final String FIND_BY_ID_SQL = FIND_ALL_SQL + """
              WHERE id = ?
             """;
+
+    /**
+     * SQL запрос {@code .prepareStatement()} у нас динамический, основанием которого служет {@code FIND_ALL_SQL}.
+     * Но далее на основании фильтра мы должны достроить условие <i>WHERE</i>, если есть такие поля и добавить
+     * <i>LIMIT & OFFSET</i> в конце. Поэтому, этот SQL мы будем формировать во время выполнения нашего метода
+     * {@code .findAll(TicketFilter filter)}.
+     * <br><br>
+     * Создаём коллекцию параметров, передавая в дженерики класс Object, потому-что у нас могут быть разные запросы
+     * и разное количество параметров:
+     * <pre>{@code
+     *         List<Object> parameters = new ArrayList<>();
+     *         List<String> whereSql = new ArrayList<>();
+     *
+     *         if (filter.seatNo() != null) {
+     *             whereSql.add("seat_no LIKE ?");
+     *             // % для LIKE оператора
+     *             parameters.add("%" + filter.seatNo() + "%");
+     *         }
+     *         if (filter.passengerName() != null) {
+     *             whereSql.add("passenge_name = ?");
+     *             parameters.add(filter.passengerName());
+     *         }
+     *         parameters.add(filter.limit());
+     *         parameters.add(filter.offset());
+     * }</pre>
+     * Далее нам надо пройтись циклом по этим параметрам и установить их в {@code .prepareStatement()}:
+     * <pre>{@code
+     *             for (int i = 0; i < parameters.size(); i++) {
+     *                 preparedStatement.setObject(i + 1, parameters.get(i));
+     *             }
+     * }</pre>
+     * Если в фильтре не будет ни одного параметра, то нужно добавить пустую строку вместо WHERE (иначе будет ошибка)
+     *
+     * @param filter
+     * @return
+     */
+    public List<Ticket> findAll(TicketFilter filter) {
+        List<Object> parameters = new ArrayList<>();
+        List<String> whereSql = new ArrayList<>();
+
+        if (filter.seatNo() != null) {
+            whereSql.add("seat_no LIKE ?");
+            // % для LIKE оператора
+            parameters.add("%" + filter.seatNo() + "%");
+        }
+        if (filter.passengerName() != null) {
+            whereSql.add("passenger_name = ?");
+            parameters.add(filter.passengerName());
+        }
+        parameters.add(filter.limit());
+        parameters.add(filter.offset());
+
+        // Stream API
+        // ВСЕГДА используем статический импорт для коллекторов
+        String where = whereSql.stream()
+                .collect(joining(" AND ", " WHERE ", " LIMIT ? OFFSET ? "));
+
+        String sql = FIND_ALL_SQL + where;
+
+        try (
+                Connection connection = ConnectionManager.get();
+                PreparedStatement preparedStatement = connection.prepareStatement(sql);
+        ) {
+            for (int i = 0; i < parameters.size(); i++) {
+                preparedStatement.setObject(i + 1, parameters.get(i));
+            }
+            System.out.println(preparedStatement);
+
+            ResultSet resultSet = preparedStatement.executeQuery();
+
+            // Результирующий набор тикетов
+            List<Ticket> tickets = new ArrayList<>();
+            while (resultSet.next()) {
+                tickets.add(buildTicket(resultSet));
+            }
+
+            return tickets;
+        } catch (SQLException throwables) {
+            throw new DaoException(throwables);
+        }
+    }
 
     public List<Ticket> findAll() {
         try (
