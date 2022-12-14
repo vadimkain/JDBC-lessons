@@ -8,6 +8,11 @@ import java.util.Optional;
 
 public class DaoRunner {
     public static void main(String[] args) {
+        Optional<Ticket> ticket = TicketDao.getInstance().findById(5L);
+        System.out.println(ticket);
+    }
+
+    private static void filterTest() {
         TicketFilter ticketFilter = new TicketFilter(3, 0, "Евгений Кудрявцев", "A1");
         List<Ticket> tickets = TicketDao.getInstance().findAll(ticketFilter);
         for (Ticket ticket :
@@ -57,7 +62,7 @@ public class DaoRunner {
         Ticket ticket = new Ticket();
         ticket.setPassengerNo(passengerNo);
         ticket.setPassengerName(passengerName);
-        ticket.setFlightId(flightId);
+        // ticket.setFlight(flightId);
         ticket.setSeatNo(seatNo);
         ticket.setCost(cost);
 

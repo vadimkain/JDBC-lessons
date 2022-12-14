@@ -1,6 +1,7 @@
 package dao;
 
 import dto.TicketFilter;
+import entity.Flight;
 import entity.Ticket;
 import exception.DaoException;
 import util.ConnectionManager;
@@ -9,14 +10,10 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 import static java.util.stream.Collectors.joining;
 
-/**
- * <h1>DAO. Batch SELECT с фильтрацией</h1>
- */
-public class TicketDao {
+public class TicketDao implements Dao<Long, Ticket> {
     private static final String DELETE_SQL = """
             DELETE FROM flight_storage.ticket WHERE id = ?
             """;
@@ -29,13 +26,24 @@ public class TicketDao {
             SET passenger_no = ?, passenger_name = ?, flight_id = ?, seat_no = ?, cost = ?
             WHERE id = ?
             """;
+    //language=POSTGRES-PSQL
     private static final String FIND_ALL_SQL = """
-            SELECT id, passenger_no, passenger_name, flight_id, seat_no, cost
-            FROM flight_storage.ticket
+            SELECT 
+            t.id, t.passenger_no, t.passenger_name, t.flight_id, t.seat_no, t.cost,
+            f.status, 
+            f.aircraft_id, 
+            f.arrival_airport_code, 
+            f.arrival_date, 
+            f.departure_airport_code, 
+            f.flight_no,
+            f.departure_date
+            FROM flight_storage.ticket t
+            JOIN flight_storage.flight f ON t.flight_id = f.id
             """;
     public static final String FIND_BY_ID_SQL = FIND_ALL_SQL + """
-             WHERE id = ?
+             WHERE t.id = ?
             """;
+    private final FlightDao flightDao = FlightDao.getInstance();
 
     /**
      * SQL запрос {@code .prepareStatement()} у нас динамический, основанием которого служет {@code FIND_ALL_SQL}.
@@ -162,12 +170,37 @@ public class TicketDao {
         }
     }
 
-    private static Ticket buildTicket(ResultSet resultSet) throws SQLException {
+    /**
+     * Каждый ResultSet знает о Statement, который его вызвал и каждый Statement знает о Connection, который его
+     * вызвал:
+     * <pre>{@code
+     * flightDao.findById(
+     *      resultSet.getLong("flight_id"),
+     *      resultSet.getStatement().getConnection()).orElse(null),
+     * }</pre>
+     * Таким образом мы можем получить доступ к нашему соединению из ResultSet.
+     * @param resultSet
+     * @return
+     * @throws SQLException
+     */
+    private Ticket buildTicket(ResultSet resultSet) throws SQLException {
+        Flight flight = new Flight(
+                resultSet.getLong("flight_id"),
+                resultSet.getString("flight_no"),
+                resultSet.getTimestamp("departure_date").toLocalDateTime(),
+                resultSet.getString("departure_airport_code"),
+                resultSet.getTimestamp("arrival_date").toLocalDateTime(),
+                resultSet.getString("arrival_airport_code"),
+                resultSet.getInt("aircraft_id"),
+                resultSet.getString("status")
+        );
         return new Ticket(
                 resultSet.getLong("id"),
                 resultSet.getString("passenger_no"),
                 resultSet.getString("passenger_name"),
-                resultSet.getLong("flight_id"),
+                flightDao.findById(
+                        resultSet.getLong("flight_id"),
+                        resultSet.getStatement().getConnection()).orElse(null),
                 resultSet.getString("seat_no"),
                 resultSet.getBigDecimal("cost")
         );
@@ -180,7 +213,7 @@ public class TicketDao {
         ) {
             preparedStatement.setString(1, ticket.getPassengerNo());
             preparedStatement.setString(2, ticket.getPassengerName());
-            preparedStatement.setLong(3, ticket.getFlightId());
+            preparedStatement.setLong(3, ticket.getFlight().id());
             preparedStatement.setString(4, ticket.getSeatNo());
             preparedStatement.setBigDecimal(5, ticket.getCost());
             preparedStatement.setLong(6, ticket.getId());
@@ -202,7 +235,7 @@ public class TicketDao {
         ) {
             preparedStatement.setString(1, ticket.getPassengerNo());
             preparedStatement.setString(2, ticket.getPassengerName());
-            preparedStatement.setLong(3, ticket.getFlightId());
+            preparedStatement.setLong(3, ticket.getFlight().id());
             preparedStatement.setString(4, ticket.getSeatNo());
             preparedStatement.setBigDecimal(5, ticket.getCost());
 
